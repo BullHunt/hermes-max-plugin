@@ -1768,6 +1768,74 @@ def _env_enablement() -> dict:
     return data
 
 
+_STANDALONE_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+_STANDALONE_VOICE_EXTS = {".ogg", ".oga", ".opus"}
+_STANDALONE_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+
+
+async def _standalone_send(
+    pconfig,
+    chat_id,
+    message,
+    *,
+    thread_id=None,
+    media_files=None,
+    force_document=False,
+):
+    """Out-of-process Max delivery (deliver=max cron jobs, or send_message
+    when the gateway isn't running in this process). Implements the
+    standalone_sender_fn contract from gateway/platforms/ADDING_A_PLATFORM.md
+    — without it, deliver=max cron jobs fail with "No live adapter for
+    platform 'max'" whenever cron runs separately from the gateway (this
+    plugin never registered one). Builds a throwaway MaxAdapter instance and
+    reuses its real send methods (chunking, markdown fallback, attachment
+    upload/retry) instead of re-implementing the MAX REST calls a second
+    time.
+    """
+    adapter = MaxAdapter(pconfig)
+    if not adapter.token:
+        return {"error": "Max: MAX_BOT_TOKEN not set"}
+
+    adapter._session = aiohttp.ClientSession(
+        headers={"Authorization": adapter.token},
+        timeout=aiohttp.ClientTimeout(total=120),
+        connector=aiohttp.TCPConnector(ssl=_max_ssl_context()),
+    )
+    try:
+        results = []
+        caption = message or ""
+        for entry in media_files or []:
+            # send_message_tool's internal helpers pass (path, is_voice)
+            # tuples in some call sites and bare path strings in others —
+            # accept either.
+            path, is_voice = entry if isinstance(entry, (tuple, list)) else (entry, False)
+            ext = Path(str(path)).suffix.lower()
+            if force_document:
+                result = await adapter.send_document(chat_id, file_path=path, caption=caption)
+            elif is_voice or ext in _STANDALONE_VOICE_EXTS:
+                result = await adapter.send_voice(chat_id, path=path, caption=caption)
+            elif ext in _STANDALONE_IMAGE_EXTS:
+                result = await adapter.send_image_file(chat_id, image_path=path, caption=caption)
+            elif ext in _STANDALONE_VIDEO_EXTS:
+                result = await adapter.send_video(chat_id, path=path, caption=caption)
+            else:
+                result = await adapter.send_document(chat_id, file_path=path, caption=caption)
+            caption = ""  # only the first attachment carries the message text as a caption
+            results.append(result)
+            if not result.success:
+                return {"error": result.error or "Max standalone media send failed"}
+
+        if not media_files:
+            results.append(await adapter.send(chat_id, message))
+
+        last = results[-1]
+        if last.success:
+            return {"success": True, "message_id": last.message_id}
+        return {"error": last.error or "Max standalone send failed"}
+    finally:
+        await adapter._session.close()
+
+
 def register(ctx):
     """Register Max Messenger platform adapter."""
     ctx.register_platform(
@@ -1777,6 +1845,7 @@ def register(ctx):
         check_fn=check_requirements,
         validate_config=validate_config,
         env_enablement_fn=_env_enablement,
+        standalone_sender_fn=_standalone_send,
         required_env=["MAX_BOT_TOKEN"],
         install_hint="pip install aiohttp",
         allowed_users_env="MAX_ALLOWED_USERS",
