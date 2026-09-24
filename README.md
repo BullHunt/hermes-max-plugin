@@ -219,6 +219,9 @@ dispatcher doesn't recognize and the command silently no-ops. Only
 `description` — pure display text with no effect on dispatch — is safe to
 translate, so that's the only field this plugin localizes.
 
+For a full reference of every Hermes gateway command (not just the 12 in
+MAX's menu) with Russian descriptions, see [`COMMANDS.ru.md`](COMMANDS.ru.md).
+
 For everything Hermes says *beyond* the command menu — approval prompts,
 restart/drain notices, and the replies of several built-in slash commands —
 Hermes ships its own translation catalog (`agent/i18n.py`,
