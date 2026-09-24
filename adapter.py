@@ -31,6 +31,7 @@ from gateway.platforms.base import (
     SendResult,
 )
 from gateway.config import Platform, PlatformConfig
+from hermes_constants import get_hermes_home
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,39 @@ def _max_ssl_context() -> ssl.SSLContext:
         )
     _ssl_context_cache = ctx
     return ctx
+
+
+def _max_poll_state_path() -> Path:
+    """Disk location for the long-poll marker (survives gateway restarts)."""
+    return get_hermes_home() / "plugins" / "max" / "state" / "poll_state.json"
+
+
+def _load_persisted_marker() -> int:
+    path = _max_poll_state_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        marker = int(data.get("marker", 0))
+        if marker > 0:
+            logger.info("Max: resuming long-poll from persisted marker=%s (%s)", marker, path)
+        return marker
+    except FileNotFoundError:
+        return 0
+    except Exception as exc:
+        logger.warning("Max: could not read persisted marker from %s (%s) — starting at 0", path, exc)
+        return 0
+
+
+def _save_persisted_marker(marker: int) -> None:
+    path = _max_poll_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps({"marker": marker}), encoding="utf-8")
+        tmp_path.replace(path)
+    except Exception as exc:
+        logger.warning("Max: failed to persist marker=%s to %s: %s", marker, path, exc)
+
+
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"
 DEFAULT_WEBHOOK_PORT = 8650
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
@@ -1399,7 +1433,11 @@ class MaxAdapter(BasePlatformAdapter):
     async def _poll_loop(self):
         """Long-poll GET /updates with marker."""
         logger.warning("Max: _poll_loop STARTING")
-        marker: int = 0
+        # Resume from the last marker persisted to disk instead of always
+        # starting at 0 — a plain in-memory marker means every gateway
+        # restart either replays the whole update history or (if MAX has
+        # already GC'd it) silently drops whatever arrived while down.
+        marker: int = _load_persisted_marker()
         backoff = 1
         while self._running and self._session:
             try:
@@ -1448,6 +1486,12 @@ class MaxAdapter(BasePlatformAdapter):
                             continue
                         logger.warning(f"Max: about to call _handle_update, update_type={u.get('update_type','?')}")
                         await self._handle_update(u)
+
+                    # Persist after the batch is dispatched (not before) so a
+                    # crash mid-handling replays that batch on restart instead
+                    # of silently skipping it — at-least-once, not at-most-once.
+                    if new_marker is not None:
+                        _save_persisted_marker(marker)
 
             except asyncio.TimeoutError:
                 continue
