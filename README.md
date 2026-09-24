@@ -206,6 +206,40 @@ or raw MAX attachments:
 }
 ```
 
+## Localization
+
+The native command menu (`/help`, `/model`, etc. — see `MAX_NATIVE_COMMANDS`
+in `adapter.py`) ships with Russian **descriptions** by default; the command
+**names** stay English on purpose. MAX's command menu only stores a `name` +
+`description` pair — `name` is the literal slash-command trigger, and
+Hermes's gateway dispatcher (`gateway/run.py`) matches incoming text against
+a fixed set of canonical English command names. Translating `name` would
+show a nice Russian trigger in MAX's UI, but tapping it sends text the
+dispatcher doesn't recognize and the command silently no-ops. Only
+`description` — pure display text with no effect on dispatch — is safe to
+translate, so that's the only field this plugin localizes.
+
+For everything Hermes says *beyond* the command menu — approval prompts,
+restart/drain notices, and the replies of several built-in slash commands —
+Hermes ships its own translation catalog (`agent/i18n.py`,
+`locales/<lang>.yaml`), independent of this plugin, and Russian (`ru`) is
+already a supported, essentially complete catalog (as of this writing,
+`locales/ru.yaml` is 416 lines against 428 in `locales/en.yaml`). It's not
+wired to MAX specifically — it recolors every platform Hermes talks on at
+once (Telegram, Discord, CLI, MAX, ...). Because it's global rather than
+MAX-specific, this plugin does **not** turn it on for you at install time;
+opt in yourself by adding to `~/.hermes/config.yaml`:
+
+```yaml
+display:
+  language: ru
+```
+
+Restart the gateway (`hermes gateway restart`) afterward. Note `/whoami`'s
+reply specifically is not yet migrated into this catalog (it's an f-string
+in `gateway/slash_commands.py`), so it stays English even with `language: ru`
+set — everything else covered by the catalog will switch.
+
 ## Development
 
 Useful checks:
