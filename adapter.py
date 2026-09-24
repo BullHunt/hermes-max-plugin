@@ -5,7 +5,8 @@ Uses Webhook (POST /subscriptions) or long-polling (GET /updates) for
 receiving messages and REST API (POST /messages) for sending.
 
 API docs: https://dev.max.ru/docs-api
-Base URL: https://platform-api.max.ru
+Base URL: https://platform-api2.max.ru (platform-api.max.ru retired 2026-07-19;
+the old host still answers as of this patch but is not guaranteed to stay up)
 """
 
 import asyncio
@@ -15,6 +16,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -32,7 +34,47 @@ from gateway.config import Platform, PlatformConfig
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_API_BASE_URL = "https://platform-api.max.ru"
+# 2026-07-19: MAX moved its Bot API to platform-api2.max.ru, whose cert
+# chains to the Russian Ministry of Digital Development's own root ("Russian
+# Trusted Root CA") — not present in the standard system/Mozilla CA bundle.
+# _max_ssl_context() below extends (not replaces) the default trust store
+# with that root so both the new and the still-answering old host keep
+# working through the transition, instead of failing TLS verification.
+DEFAULT_MAX_API_BASE_URL = "https://platform-api2.max.ru"
+_PLUGIN_DIR = Path(__file__).resolve().parent
+_RUSSIAN_CA_BUNDLE_FILES = (
+    _PLUGIN_DIR / "ca" / "russian_trusted_sub_ca.pem",
+    _PLUGIN_DIR / "ca" / "russian_trusted_root_ca.pem",
+)
+_ssl_context_cache: Optional[ssl.SSLContext] = None
+
+
+def _max_ssl_context() -> ssl.SSLContext:
+    """Build (and cache) an SSL context trusting system CAs plus MAX's
+    Mintsifry-issued chain, so platform-api2.max.ru verifies cleanly without
+    disabling verification for anything else this adapter talks to."""
+    global _ssl_context_cache
+    if _ssl_context_cache is not None:
+        return _ssl_context_cache
+    ctx = ssl.create_default_context()
+    loaded_extra = False
+    for ca_path in _RUSSIAN_CA_BUNDLE_FILES:
+        if not ca_path.exists():
+            continue
+        try:
+            ctx.load_verify_locations(cafile=str(ca_path))
+            loaded_extra = True
+        except ssl.SSLError as exc:
+            logger.warning("Max: failed to load CA bundle %s: %s", ca_path, exc)
+    if not loaded_extra:
+        logger.warning(
+            "Max: Russian Trusted Root CA not found under %s — "
+            "platform-api2.max.ru TLS verification will fail. Expected files: %s",
+            _PLUGIN_DIR / "ca",
+            ", ".join(p.name for p in _RUSSIAN_CA_BUNDLE_FILES),
+        )
+    _ssl_context_cache = ctx
+    return ctx
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"
 DEFAULT_WEBHOOK_PORT = 8650
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
@@ -567,6 +609,7 @@ class MaxAdapter(BasePlatformAdapter):
                 "Authorization": self.token,
             },
             timeout=aiohttp.ClientTimeout(total=120),
+            connector=aiohttp.TCPConnector(ssl=_max_ssl_context()),
         )
 
         # Verify token without consuming updates. MAX requires Authorization header.
@@ -1034,7 +1077,11 @@ class MaxAdapter(BasePlatformAdapter):
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             # Use a clean session so MAX bot Authorization is never sent to the CDN host.
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Same extended CA trust as the main session: MAX's media CDN can sit
+            # behind the same Mintsifry-issued chain as the Bot API host.
+            async with aiohttp.ClientSession(
+                timeout=timeout, connector=aiohttp.TCPConnector(ssl=_max_ssl_context())
+            ) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
                         logger.warning("Max inbound media download failed: HTTP %s", resp.status)
