@@ -902,12 +902,18 @@ class MaxAdapter(BasePlatformAdapter):
     async def _register_native_commands(self) -> None:
         """Register MAX native command menu entries.
 
-        MAX exposes the slash-command menu from the bot's ``/me.commands`` field,
-        updated with ``PATCH /me``. Keep this list compact: MAX caps it at 32.
+        Was ``PATCH /me`` with an embedded ``commands`` field — that 404s
+        with ``method.not.found`` on platform-api2.max.ru. Current MAX docs
+        (dev.max.ru/docs-api/methods/PATCH/me/commands) split this into its
+        own endpoint; the request/response body shape
+        (``{"commands": [{"name", "description"}, ...]}``, max 32) is
+        unchanged, only the path moved.
         """
-        result = await self._api_patch("/me", {"commands": MAX_NATIVE_COMMANDS})
+        result = await self._api_patch("/me/commands", {"commands": MAX_NATIVE_COMMANDS})
         if result:
             logger.info("Max: native commands registered (%s)", len(MAX_NATIVE_COMMANDS))
+        else:
+            logger.warning("Max: native command registration failed (non-fatal, bot still works)")
 
     async def _send_text_message(
         self,
