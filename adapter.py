@@ -122,18 +122,24 @@ MAX_INLINE_KEYBOARD_COLUMNS = 1
 MAX_CALLBACK_NOTIFICATION_LIMIT = 1024
 MAX_ATTACHMENT_TYPES = {"image", "file", "voice", "video", "audio", "contact", "inline_keyboard", "clipboard", "location"}
 MAX_NATIVE_COMMANDS = [
-    {"name": "help", "description": "Show available commands."},
-    {"name": "commands", "description": "List all slash commands."},
-    {"name": "status", "description": "Show current status."},
-    {"name": "whoami", "description": "Show your sender id."},
-    {"name": "model", "description": "Show or set the model."},
-    {"name": "reset", "description": "Reset the current session."},
-    {"name": "new", "description": "Start a new session."},
-    {"name": "think", "description": "Set thinking level."},
-    {"name": "verbose", "description": "Toggle verbose mode."},
-    {"name": "reasoning", "description": "Toggle reasoning visibility."},
-    {"name": "usage", "description": "Usage footer or cost summary."},
-    {"name": "stop", "description": "Stop the current run."},
+    # Only "description" (the menu subtitle) is localized here — "name" is
+    # the literal slash-command trigger the gateway's command dispatcher
+    # matches against a fixed set of canonical English names
+    # (gateway/run.py). MAX would happily show a Russian trigger in the
+    # menu, but tapping it would send unrecognized text and the command
+    # would silently no-op, so "name" stays English.
+    {"name": "help", "description": "Показать доступные команды."},
+    {"name": "commands", "description": "Список всех слэш-команд."},
+    {"name": "status", "description": "Показать текущий статус."},
+    {"name": "whoami", "description": "Показать ваш ID отправителя."},
+    {"name": "model", "description": "Показать или задать модель."},
+    {"name": "reset", "description": "Сбросить текущую сессию."},
+    {"name": "new", "description": "Начать новую сессию."},
+    {"name": "think", "description": "Задать уровень размышления."},
+    {"name": "verbose", "description": "Переключить подробный режим."},
+    {"name": "reasoning", "description": "Переключить видимость рассуждений."},
+    {"name": "usage", "description": "Сводка использования/стоимости."},
+    {"name": "stop", "description": "Остановить текущий запуск."},
 ]
 
 MAX_ATTACHMENT_MESSAGE_TYPES = {
